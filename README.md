@@ -1,5 +1,5 @@
-# Instruction-tuning Gemma-2b
-Fine-tuning a Gemma 2b model on Alpaca to follow instructions.
+# Instruction-tuning Tilde-Open 30b
+Fine-tuning the [Tilde-Open 30b](https://huggingface.co/TildeAI/TildeOpen-30b) model on Alpaca to follow instructions.
 
 **Blog post**: https://m-ali.org/posts/instruction-tuning-tutorial/
 
@@ -7,7 +7,7 @@ Fine-tuning a Gemma 2b model on Alpaca to follow instructions.
 What was used to fine-tune the model:
 ```
 finetune.py \
-    --model-path "google/gemma-2-2b" --batch-size 2 --eval-accumulation-steps 5 \
+    --model-path "TildeAI/TildeOpen-30b" --batch-size 2 --eval-accumulation-steps 5 \
     --data-paths "alpaca-data.json" "instruction-data.json" \
     --output-name "gemma-2b-lora-adapter" \
     --use-lora \
