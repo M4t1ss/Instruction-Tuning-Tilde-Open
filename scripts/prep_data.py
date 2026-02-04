@@ -15,7 +15,7 @@ def format_input(entry):
     )
     # points can have no input, e.g.
     #  {'instruction': "What is an antonym of 'complicated'?", 'input': '', 'output': "An antonym of 'complicated' is 'simple'."}
-    input_text = f"\n\n###Input: \n{entry['input'] if entry['input'] else ''}"
+    input_text = f"\n\n### Input: \n{entry['input'] if entry['input'] else ''}"
     
     return instruction_text + input_text
 

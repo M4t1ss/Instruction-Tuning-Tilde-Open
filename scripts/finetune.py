@@ -21,6 +21,7 @@ from peft import (
 
 from prep_data import format_input, load_and_split_data
 from data import InstructionDataset
+from transformers import BitsAndBytesConfig
 
 # allow flexible memory allocation for CUDA and enable garbage collection
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,garbage_collection_threshold:0.6'
@@ -75,17 +76,30 @@ def main(args):
     
     # Load model and tokenizer with optional quantization
     model_kwargs = {"device_map": "auto"} if torch.cuda.is_available() else {}
-    if args.load_in_8bit:
-        model_kwargs["load_in_8bit"] = True
-    elif args.load_in_4bit:
-        model_kwargs["load_in_4bit"] = True
+    # if args.load_in_8bit:
+    #     model_kwargs["load_in_8bit"] = True
+    # elif args.load_in_4bit:
+    #     model_kwargs["load_in_4bit"] = True
+
+
+    nf4_config = BitsAndBytesConfig(
+       load_in_4bit=True,
+       bnb_4bit_quant_type="nf4",
+       bnb_4bit_use_double_quant=True,
+       bnb_4bit_compute_dtype=torch.bfloat16
+    )
+
+    desired_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
         
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path,
-        attn_implementation='eager',
+        dtype=desired_dtype,
+        attn_implementation='flash_attention_2',
+        quantization_config=nf4_config,
         **model_kwargs
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    model.config.use_cache = False
     
     # Setup LoRA if specified
     if args.use_lora:
@@ -109,24 +123,33 @@ def main(args):
             project=args.wandb_project,
             config=vars(args)
         )
+
+    checkpointing_args = {"use_reentrant": False}
     
     # Setup training arguments
     training_args = TrainingArguments(
         output_dir=f"./{args.output_name}",
         overwrite_output_dir=True,
+        auto_find_batch_size=True,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.eval_batch_size,
+        logging_steps=args.log_steps,
+        logging_strategy="steps",
         eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         eval_accumulation_steps=args.eval_accumulation_steps,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         warmup_steps=args.warmup_steps,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         logging_dir="./logs",
         report_to="wandb" if not args.disable_wandb else "none",
         run_name=run.name if not args.disable_wandb else None,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs=checkpointing_args,
+        label_names=["labels"],
     )
     
     # Setup trainer
@@ -174,12 +197,16 @@ if __name__ == "__main__":
                         help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=4,
                         help="Training batch size")
+    parser.add_argument("--eval-batch-size", type=int, default=4,
+                        help="Evaluation batch size")
     parser.add_argument("--learning-rate", type=float, default=5e-5,
                         help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=0.01,
                         help="Weight decay")
     parser.add_argument("--eval-steps", type=int, default=500,
                         help="Number of steps between evaluations")
+    parser.add_argument("--log-steps", type=int, default=100,
+                        help="Number of steps between logs")
     parser.add_argument("--save-steps", type=int, default=1000,
                         help="Number of steps between model saves")
     parser.add_argument("--warmup-steps", type=int, default=500,
@@ -187,6 +214,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval-accumulation-steps", type=int, default=10,
                         help="""number of predictions steps to accumulate the output tensors for,
                         before moving the results to the CPU""")
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=2,
+                        help="""gradient accumulation steps""")
     
     # LoRA arguments
     parser.add_argument("--use-lora", action="store_true",
