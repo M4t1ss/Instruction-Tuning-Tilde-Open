@@ -19,8 +19,7 @@ from peft import (
     TaskType
 )
 
-from prep_data import format_input, load_and_split_data
-from data import InstructionDataset
+from data import InstructionDataset, load_and_split_data
 from transformers import BitsAndBytesConfig
 
 # allow flexible memory allocation for CUDA and enable garbage collection
@@ -65,9 +64,10 @@ def main(args):
     
     # Load and split data
     train_data, val_data, test_data = load_and_split_data(
-        args.data_paths,
         args.train_split,
-        args.test_split
+        args.test_split,
+        json_paths=args.data_paths,
+        hf_datasets=args.hf_datasets
     )
     
     # Setup device
@@ -93,12 +93,13 @@ def main(args):
         
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path,
-        dtype=desired_dtype,
+        torch_dtype=desired_dtype,
         attn_implementation='flash_attention_2',
         quantization_config=nf4_config,
         **model_kwargs
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path, use_fast=False)
+    tokenizer.chat_template = "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
     model.config.use_cache = False
     
     # Setup LoRA if specified
@@ -163,7 +164,10 @@ def main(args):
     
     # Train model
     start_time = time.time()
-    trainer.train()
+    if not args.resume_model_path:
+        trainer.train()
+    else:
+        trainer.train(resume_from_checkpoint=args.resume_model_path)
     end_time = time.time()
     execution_time_minutes = (end_time - start_time) / 60
     print(f"Training completed in {execution_time_minutes:.2f} minutes.")
@@ -187,8 +191,12 @@ if __name__ == "__main__":
     # Model and data arguments
     parser.add_argument("--model-path", type=str, required=True,
                         help="Path to the pre-trained model")
+    parser.add_argument("--resume-model-path", type=str, required=False,
+                        help="Path to the fine-tuned model")
     parser.add_argument("--data-paths", type=str, nargs="+", required=True,
                         help="Paths to the instruction data JSON files")
+    parser.add_argument("--hf-datasets", type=str, nargs="*", default=None,
+                        help="Hugging Face dataset names to load")
     parser.add_argument("--output-name", type=str, required=True,
                         help="Name for the output model directory")
     
